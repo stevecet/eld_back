@@ -78,5 +78,5 @@ REST_FRAMEWORK = {
 }
 
 # ✅ CORS
-CORS_ALLOWED_ORIGINS = ["https://eld-front-ten.vercel.app"]
+CORS_ALLOWED_ORIGINS = ["https://eld-front-ten.vercel.app", "http://localhost:3000"]
 CORS_ALLOW_CREDENTIALS = True
