@@ -7,7 +7,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-key-for-development')
 DEBUG = False
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = ["eld-back-i14v.onrender.com", "localhost"]
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -78,5 +78,5 @@ REST_FRAMEWORK = {
 }
 
 # ✅ CORS
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOWED_ORIGINS = ["https://eld-front-ten.vercel.app"]
 CORS_ALLOW_CREDENTIALS = True
