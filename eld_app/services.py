@@ -4,12 +4,14 @@ import requests
 from requests.exceptions import RequestException
 from .models import LogEntry
 
+
 class RouteService:
     """Service for geocoding locations and calculating driving routes using OSRM and OpenStreetMap APIs."""
+
     def __init__(self):
         self.base_url = "https://router.project-osrm.org/route/v1/driving"
         self.nominatim_url = "https://nominatim.openstreetmap.org/search"
-    
+
     def geocode_location(self, location):
         """Geocodes a location string to latitude and longitude using Nominatim."""
         params = {
@@ -17,8 +19,13 @@ class RouteService:
             'format': 'json',
             'limit': 1
         }
+        headers = {
+            'User-Agent': 'eld-backend/1.0 (steveceto@gmail.com)'
+        }
+
         try:
-            response = requests.get(self.nominatim_url, params=params, timeout=10)
+            response = requests.get(
+                self.nominatim_url, params=params, headers=headers, timeout=10)
             response.raise_for_status()
             data = response.json()
             if data and 'lat' in data[0] and 'lon' in data[0]:
@@ -26,6 +33,7 @@ class RouteService:
         except (RequestException, IndexError, ValueError) as e:
             print(f"Geocoding failed for '{location}': {e}")
             return None, None
+
         return None, None
 
     def calculate_route(self, current_loc, pickup_loc, dropoff_loc):
@@ -44,18 +52,19 @@ class RouteService:
                 'overview': 'full',
                 'geometries': 'geojson'
             }
-            
+
             response = requests.get(url, params=params, timeout=15)
             response.raise_for_status()
             route_data = response.json()
 
             if route_data.get('code') != 'Ok' or not route_data.get('routes'):
-                raise ValueError("OSRM route calculation failed or no route found.")
-            
+                raise ValueError(
+                    "OSRM route calculation failed or no route found.")
+
             route = route_data['routes'][0]
             total_distance_miles = route['distance'] / 1609.34
             total_duration_hours = route['duration'] / 3600
-            
+
             # This is a bit of a hack to get segment durations,
             # but it's more accurate than a simple percentage.
             segments = []
@@ -71,9 +80,12 @@ class RouteService:
                 'geometry': route['geometry'],
                 'segments': segments,
                 'waypoints': [
-                    {'name': current_loc, 'coordinates': [locations[0].split(',')[1], locations[0].split(',')[0]]},
-                    {'name': pickup_loc, 'coordinates': [locations[1].split(',')[1], locations[1].split(',')[0]]},
-                    {'name': dropoff_loc, 'coordinates': [locations[2].split(',')[1], locations[2].split(',')[0]]},
+                    {'name': current_loc, 'coordinates': [
+                        locations[0].split(',')[1], locations[0].split(',')[0]]},
+                    {'name': pickup_loc, 'coordinates': [
+                        locations[1].split(',')[1], locations[1].split(',')[0]]},
+                    {'name': dropoff_loc, 'coordinates': [
+                        locations[2].split(',')[1], locations[2].split(',')[0]]},
                 ]
             }
 
@@ -101,6 +113,7 @@ class RouteService:
 
 class ELDService:
     """Service for generating ELD-compliant log entries and daily log sheets."""
+
     def __init__(self):
         self.max_drive_hours = 11
         self.max_duty_hours = 14
@@ -117,80 +130,88 @@ class ELDService:
 
         # Initial Off-Duty segment
         if current_time_decimal > 0:
-            log_entries.append(self._create_log_entry(trip, 'off_duty', current_date, 0, current_time_decimal, trip.current_location, 'Off duty before trip start'))
+            log_entries.append(self._create_log_entry(trip, 'off_duty', current_date, 0,
+                               current_time_decimal, trip.current_location, 'Off duty before trip start'))
 
         daily_drive_hours = 0
         daily_duty_hours = 0
         hours_since_break = 0
         total_trip_duration = 0
-        
+
         # Process each route segment (current->pickup, pickup->dropoff)
         for i, segment in enumerate(route_data['segments']):
             is_first_segment = (i == 0)
-            
+
             # On-duty not driving for loading/unloading
             if not is_first_segment:
-                log_entries.append(self._create_log_entry(trip, 'on_duty_not_driving', current_date, current_time_decimal, current_time_decimal + self.pickup_dropoff_duration, route_data['waypoints'][i]['name'], 'Loading/unloading activities'))
+                log_entries.append(self._create_log_entry(trip, 'on_duty_not_driving', current_date, current_time_decimal,
+                                   current_time_decimal + self.pickup_dropoff_duration, route_data['waypoints'][i]['name'], 'Loading/unloading activities'))
                 current_time_decimal += self.pickup_dropoff_duration
                 daily_duty_hours += self.pickup_dropoff_duration
-            
+
             drive_time_to_add = segment['duration_hours']
-            
+
             # Split driving time to respect 8-hour break rule
             while drive_time_to_add > 0:
                 hours_until_break = self.required_break_after_drive - hours_since_break
-                drive_segment_duration = min(drive_time_to_add, hours_until_break)
+                drive_segment_duration = min(
+                    drive_time_to_add, hours_until_break)
 
                 # Check for day change or HOS limits
                 if (current_time_decimal + drive_segment_duration > 24 or
                     daily_drive_hours + drive_segment_duration > self.max_drive_hours or
-                    daily_duty_hours + drive_segment_duration > self.max_duty_hours):
-                    
+                        daily_duty_hours + drive_segment_duration > self.max_duty_hours):
+
                     # Log remaining hours of current day and transition
                     time_to_midnight = 24 - current_time_decimal
-                    
+
                     if time_to_midnight > 0:
-                        log_entries.append(self._create_log_entry(trip, 'driving', current_date, current_time_decimal, 24, route_data['waypoints'][i]['name'], 'Driving towards ' + route_data['waypoints'][i+1]['name']))
+                        log_entries.append(self._create_log_entry(trip, 'driving', current_date, current_time_decimal, 24,
+                                           route_data['waypoints'][i]['name'], 'Driving towards ' + route_data['waypoints'][i+1]['name']))
                         daily_drive_hours += time_to_midnight
                         daily_duty_hours += time_to_midnight
                         drive_time_to_add -= time_to_midnight
-                        
+
                     # Transition to next day with mandatory off-duty/sleeper berth time
                     current_date += timedelta(days=1)
                     current_time_decimal = 0
                     daily_drive_hours = 0
                     daily_duty_hours = 0
                     hours_since_break = 0
-                    
-                    log_entries.append(self._create_log_entry(trip, 'off_duty', current_date, 0, self.off_duty_required, route_data['waypoints'][i+1]['name'], 'Required 10-hour rest period'))
+
+                    log_entries.append(self._create_log_entry(trip, 'off_duty', current_date, 0, self.off_duty_required,
+                                       route_data['waypoints'][i+1]['name'], 'Required 10-hour rest period'))
                     current_time_decimal += self.off_duty_required
-                    
+
                     # Continue loop with remaining time
                     continue
 
                 # Log driving segment
-                log_entries.append(self._create_log_entry(trip, 'driving', current_date, current_time_decimal, current_time_decimal + drive_segment_duration, route_data['waypoints'][i]['name'], 'Driving towards ' + route_data['waypoints'][i+1]['name']))
-                
+                log_entries.append(self._create_log_entry(trip, 'driving', current_date, current_time_decimal, current_time_decimal +
+                                   drive_segment_duration, route_data['waypoints'][i]['name'], 'Driving towards ' + route_data['waypoints'][i+1]['name']))
+
                 current_time_decimal += drive_segment_duration
                 daily_drive_hours += drive_segment_duration
                 daily_duty_hours += drive_segment_duration
                 hours_since_break += drive_segment_duration
                 drive_time_to_add -= drive_segment_duration
-                
+
                 # Add a 30-minute break if needed
                 if hours_since_break >= self.required_break_after_drive:
-                    log_entries.append(self._create_log_entry(trip, 'off_duty', current_date, current_time_decimal, current_time_decimal + self.break_duration, "Rest Area", 'Required 30-minute break'))
+                    log_entries.append(self._create_log_entry(trip, 'off_duty', current_date, current_time_decimal,
+                                       current_time_decimal + self.break_duration, "Rest Area", 'Required 30-minute break'))
                     current_time_decimal += self.break_duration
                     daily_duty_hours += self.break_duration
                     hours_since_break = 0
 
         # Log final off-duty time at dropoff
         if current_time_decimal < 24:
-            log_entries.append(self._create_log_entry(trip, 'off_duty', current_date, current_time_decimal, 24, trip.dropoff_location, 'Trip completed, off duty'))
+            log_entries.append(self._create_log_entry(trip, 'off_duty', current_date,
+                               current_time_decimal, 24, trip.dropoff_location, 'Trip completed, off duty'))
 
         for entry in log_entries:
             entry.save()
-        
+
         return log_entries
 
     def _create_log_entry(self, trip, status, date, start_decimal, end_decimal, location, remarks):
@@ -248,5 +269,5 @@ class ELDService:
             })
 
             daily_logs[date_str]['totals'][entry.duty_status] += duration
-        
+
         return list(daily_logs.values())
